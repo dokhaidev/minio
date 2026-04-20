@@ -1,18 +1,33 @@
-FROM minio/minio:latest
+# STAGE 1: Build binary (Nâng cấp lên bản golang mới nhất)
+FROM golang:1.24-alpine AS builder
 
-ARG TARGETARCH
-ARG RELEASE
+WORKDIR /build
 
-RUN chmod -R 777 /usr/bin
+# Tải các thư viện phụ thuộc trước để tối ưu cache của Docker
+COPY go.mod go.sum ./
+RUN go mod download
 
-COPY ./minio-${TARGETARCH}.${RELEASE} /usr/bin/minio
-COPY ./minio-${TARGETARCH}.${RELEASE}.minisig /usr/bin/minio.minisig
-COPY ./minio-${TARGETARCH}.${RELEASE}.sha256sum /usr/bin/minio.sha256sum
+# Copy toàn bộ source code
+COPY . .
 
-COPY dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+# Biên dịch mã nguồn
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o minio main.go
+
+# STAGE 2: Tạo image chạy thực tế
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates
+
+# Copy file binary và script entrypoint
+COPY --from=builder /build/minio /usr/bin/minio
+COPY --from=builder /build/dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+
+RUN chmod +x /usr/bin/minio /usr/bin/docker-entrypoint.sh
+
+EXPOSE 9000 9001
 
 ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
 
 VOLUME ["/data"]
 
-CMD ["minio"]
+CMD ["minio", "server", "/data", "--console-address", ":9001"]
